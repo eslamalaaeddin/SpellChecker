@@ -314,6 +314,7 @@ def correct(text):
 correct("I wakt tp gw tp schopl becoyse I wamt tb leqrn")
 
 
+
 def min_edit_distance(source, target, ins_cost=1, del_cost=1, rep_cost=2):
     '''
     Input:
@@ -330,17 +331,22 @@ def min_edit_distance(source, target, ins_cost=1, del_cost=1, rep_cost=2):
     m = len(source)
     n = len(target)
     # initialize cost matrix with zeros and dimensions (m+1,n+1)
-    D = np.zeros((m + 1, n + 1), dtype=int)
+    cost_matrix = np.zeros((m + 1, n + 1), dtype=int)
+    indexes_matrix = np.zeros(shape=(n + 1, m + 1), dtype=[("del", bool),  ## up arrow
+                                      ("sub", bool),  ## diagonal arrow
+                                      ("ins", bool)])  ## left arrow
+    indexes_matrix[1:, 0] = (1, 0, 0)  # vertical? set first col as deletions except first cell
+    indexes_matrix[0, 1:] = (0, 0, 1)  # horizontal? set first row as insertions except first cell
 
     ### START CODE HERE (Replace instances of 'None' with your code) ###
 
     # Fill in column 0, from row 1 to row m, both inclusive
     for row in range(1, m + 1):  # Replace None with the proper range
-        D[row, 0] = D[row - 1, 0] + del_cost
+        cost_matrix[row, 0] = cost_matrix[row - 1, 0] + del_cost
 
     # Fill in row 0, for all columns from 1 to n, both inclusive
     for col in range(1, n + 1):  # Replace None with the proper range
-        D[0, col] = D[0, col - 1] + ins_cost
+        cost_matrix[0, col] = cost_matrix[0, col - 1] + ins_cost
 
     # Loop through row 1 to row m, both inclusive
     for row in range(1, m + 1):
@@ -359,46 +365,125 @@ def min_edit_distance(source, target, ins_cost=1, del_cost=1, rep_cost=2):
 
             # Update the cost at row, col based on previous entries in the cost matrix
             # Refer to the equation calculate for D[i,j] (the minimum of three calculated costs)
-            D[row, col] = min([D[row - 1, col] + del_cost, D[row, col - 1] + ins_cost, D[row - 1, col - 1] + r_cost])
+            insertion = cost_matrix[row, col - 1] + ins_cost
+            deletion = cost_matrix[row - 1, col] + del_cost
+            replace = cost_matrix[row - 1, col - 1] + r_cost
+            minimum = np.min([deletion, insertion, replace])
+
+            # cost_matrix[row, col] = min([cost_matrix[row - 1, col] + del_cost, cost_matrix[row, col - 1] + ins_cost, cost_matrix[row - 1, col - 1] + r_cost])
+            cost_matrix[row, col] = minimum
+            indexes_matrix[row, col] = (deletion == minimum, replace == minimum, insertion == minimum)
 
     # Set the minimum edit distance with the cost found at row m, column n
-    med = D[m, n]
+    med = cost_matrix[m, n]
 
     ### END CODE HERE ###
-    return D, med
+    return cost_matrix, med, indexes_matrix
+
+def naive_backtrace(B_matrix):
+    # start from right bottom cell
+    i, j = B_matrix.shape[0] - 1, B_matrix.shape[1] - 1
+    backtrace_indexes = [(i, j)]
+
+    while (i, j) != (0, 0):
+        if B_matrix[i, j][1]:
+            i, j = i - 1, j - 1
+        elif B_matrix[i, j][0]:
+            i, j = i - 1, j
+        elif B_matrix[i, j][2]:
+            i, j = i, j - 1
+        backtrace_indexes.append((i, j))
+
+    return backtrace_indexes
+
+def align(source, target, backtrace_indexes):
+    aligned_word_1 = []
+    aligned_word_2 = []
+    operations = []
+
+    # print(backtrace_indexes)
+    backtrace = backtrace_indexes[::-1]  # make it a forward trace
+    # print(backtrace)
+    for k in range(len(backtrace) - 1): # word length - 1
+        current_row_index, current_col_index = backtrace[k]
+        next_row_index, next_row_index = backtrace[k + 1]
+
+        w_1_letter = None
+        w_2_letter = None
+        operation = None
+
+        if next_row_index > current_row_index and next_row_index > current_col_index:  # either substitution or no-op
+            if source[current_row_index] == target[current_col_index]:  # no-op, same symbol
+                w_1_letter = source[current_row_index]
+                w_2_letter = target[current_col_index]
+                operation = " "
+            else:  # cost increased: substitution
+                w_1_letter = source[current_row_index]
+                w_2_letter = target[current_col_index]
+                operation = "s"
+        elif current_row_index == next_row_index:  # insertion
+            w_1_letter = " "
+            w_2_letter = target[current_col_index]
+            operation = "i"
+        else:  # j_0 == j_1,  deletion
+            w_1_letter = source[current_row_index]
+            w_2_letter = " "
+            operation = "d"
+
+        aligned_word_1.append(w_1_letter)
+        aligned_word_2.append(w_2_letter)
+        operations.append(operation)
+
+    return aligned_word_1, aligned_word_2, operations
+
+def make_table(source, target, cost_matrix, indexes_matrix, backtrace_indexes):
+    source_upper = source.upper()
+    target_upper = target.upper()
+
+    source_upper = "#" + source_upper
+    target_upper = "#" + target_upper
+
+    table = []
+    # table formatting in emacs, you probably don't need this line
+    # table.append(["<r>" for _ in range(len(w_2) + 1)])
+    table.append([""] + list(target_upper))
+
+    max_n_len = len(str(np.max(cost_matrix)))
+
+    for i, source_char in enumerate(source_upper):
+        row = [source_char]
+        for j, target_char in enumerate(target_upper):
+            vertical, diagonal, horizontal = indexes_matrix[i, j]
+            direction = ("⇑" if vertical else "") + \
+                        ("⇖" if diagonal else "") + \
+                        ("⇐" if horizontal else "")
+            dist = str(cost_matrix[i, j])
+
+            cell_str = "{direction} {star}{dist}{star}".format(
+                direction=direction,
+                star=" *"[((i, j) in backtrace_indexes)],
+                dist=dist)
+            row.append(cell_str)
+        table.append(row)
+
+    return table
 
 
-def test_min_edit_distance():
-    source = 'play'
-    target = 'stay'
-    matrix, min_edits = min_edit_distance(source, target)
-    print("minimum edits: ", min_edits, "\n")
-    idx = list('#' + source)
-    cols = list('#' + target)
-    df = pd.DataFrame(matrix, index=idx, columns=cols)
-    print(df)
 
-    source = 'on'
-    target = 'of'
-    matrix, min_edits = min_edit_distance(source, target)
-    print("minimum edits: ", min_edits, "\n")
-    idx = list(source)
-    idx.insert(0, '#')
-    cols = list(target)
-    cols.insert(0, '#')
-    df = pd.DataFrame(matrix, index=idx, columns=cols)
-    print(df)
+source = "to"
+target = "go"
 
-    source = "eer"
-    targets = edit_one_letter(source,
-                              allow_switches=False)  # disable switches since min_edit_distance does not include them
-    for t in targets:
-        _, min_edits = min_edit_distance(source, t, 1, 1, 1)  # set ins, del, sub costs all to one
-        if min_edits != 1: print(source, t, min_edits)
 
-    source = "eer"
-    targets = edit_two_letters(source,
-                               allow_switches=False)  # disable switches since min_edit_distance does not include them
-    for t in targets:
-        _, min_edits = min_edit_distance(source, t, 1, 1, 1)  # set ins, del, sub costs all to one
-        if min_edits != 2 and min_edits != 1: print(source, t, min_edits)
+cost_matrix, med, indexes_matrix = min_edit_distance(source, target)
+backtrace_indexes = naive_backtrace(indexes_matrix)
+
+edit_distance_table = make_table(source, target, cost_matrix, indexes_matrix, backtrace_indexes)
+alignment_table = align(source, target, backtrace_indexes)
+
+print("Minimum edit distance with backtrace:", cost_matrix[len(source)][len(target)])
+print(tb.tabulate(edit_distance_table, stralign="right", tablefmt="orgtbl"))
+print("----------------------")
+print(tb.tabulate(alignment_table, tablefmt="orgtbl"))
+
+
+
